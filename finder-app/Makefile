@@ -1,4 +1,4 @@
-CROSS_COMPILE =
+CROSS_COMPILE =aarch64-none-linux-gnu-
 
 
 
