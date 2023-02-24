@@ -67,6 +67,7 @@ rm -rf /tmp/aeld-data
 
 set +e
 echo ${OUTPUTSTRING} | grep "${MATCHSTR}" > ${OUTFILE}
+echo "test"
 if [ $? -eq 0 ]; then
 	echo "success" >> ${OUTFILE}
 	exit 0
