@@ -31,24 +31,16 @@ char *buf_to_file(char *buf, int buf_len);
 void read_stream(int newfd);
 int get_socketfd();
 int bind_func(int socketfd);
+int socketfd = 0;
+void add_sigActions();
 
-void handle_sig(int sig)
+
+ void handle_sig(int sig)
 {
-        switch(sig) {
-                case SIGINT:
-                        syslog(LOG_INFO, "signal caught");
-                        printf("caught signal sigint\n");
-                        exit(0);
-                case SIGTERM:
-                        syslog(LOG_INFO, "sig caught");
-                        printf("caught signal sigterm\n");
-                        exit(0);
-                default:
-                       syslog(LOG_DEBUG, "unknown signal");
-                       exit(1);
-        }
-       // close(socketfd);
-}
+	if (sig == SIGINT || sig == SIGTERM) {
+		kill_system = true;
+	}
+} 
 
 /* beej uses this function to get sockaddr ipv4/ipv6, so I will too */
 void *get_in_addr(struct sockaddr *sa)
@@ -63,33 +55,32 @@ int main(int argc, char *argv[])
 {
 	
 //verify proper usage
-if ((argc == 2) && (strcmp(argv[1], "-d")) == 0) {
+if (argc >= 2 && !strcmp(argv[1], "-d")) {
                printf("usage is proper. \n");
 	       daemon_time = true;
 
                }
-               else {
+          /*     else {
        printf("usage invalid");
        exit(1);
-       }
-  //signal handler
-  signal(SIGTERM, handle_sig);
-  signal(SIGINT, handle_sig);
+       } */
 
+  add_sigActions();
 
   int socketfd = get_socketfd();
-
+  
   bind_func(socketfd);
-
+ 
   if (fork() != 0) {
 	  exit(0);
   }
 
   //listen
-  listen(socketfd, 10);
+  listen(socketfd, 5);
 
   while(!kill_system) {
 	  handle_clients(socketfd);
+	  
   }
 
   close(socketfd);
@@ -104,26 +95,35 @@ void handle_clients(int socketfd)
 struct sockaddr_storage peer;
 socklen_t peer_addr_size;
 peer_addr_size = sizeof(peer);
-int newfd;
-char client[INET6_ADDRSTRLEN];  //string for clients IP
+/*int newfd;  --attempt */
+//char client[INET6_ADDRSTRLEN];  //string for clients IP
 //accepting
-   if ((newfd = accept(socketfd, (void *)&peer, &peer_addr_size) <0)) {
+/*   if ((newfd = accept(socketfd, (struct sockaddr *)&peer, &peer_addr_size) <0)) {
                 perror("did not accept");
                 syslog(LOG_DEBUG, "could not accept. \n");
 		exit(1);
-                } //replaced struct sockaddr
+                } //replaced struct sockaddr */
+  int newfd = accept(socketfd, (void *)&peer, &peer_addr_size);
+
+  if (newfd < 0) {
+	  if (kill_system)
+		  return;
+	  exit(1);
+  } else {
+	  char client[INET6_ADDRSTRLEN];
+	  char *buf = NULL;
+	  int buf_size, buf_len;
+	  ssize_t bytes_rx;
+
 //function to convert ip to something printable
 memset(client, 0, sizeof(client));
 inet_ntop(peer.ss_family, get_in_addr((struct sockaddr *)&peer), client, sizeof(client));
 printf("server got connection from: %s \n", client);
 syslog(LOG_INFO, "Accepted connection from: %s \n", client);
 
-char *buf = NULL;
-int buf_size;
-int buf_len;
-ssize_t bytes_rx;
 
-while(!kill_system) {
+
+  while(!kill_system) {
 	if (buf == NULL) {
 		buf_len = 0;
 		buf_size = 0;
@@ -152,38 +152,44 @@ while(!kill_system) {
   if (buf) {
 	  free(buf);
 	  buf = NULL;
+	  
   }
   close(newfd);
+  
+}
 }
 
-
+/* get socket fd and socket function */
 int get_socketfd()
 {
 	int yes = 1;
 	syslog(LOG_DEBUG, "starting socket func \n");
 	int socketfd;
-	if ((socketfd = socket(AF_INET, SOCK_STREAM, 0))<0) {
-           perror("not good for your socket");
+	if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ) {
+          // perror("not good for your socket");
            exit(1);     
-        }
+        }/*
 	if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes))<0){
                 perror("sockopt man");
                 exit(EXIT_FAILURE);
-        }
+        }*/
+	setsockopt(socketfd, IPPROTO_TCP, SO_REUSEADDR, &yes, sizeof(yes));
 	syslog(LOG_DEBUG, "socket func complete \n");
 	return socketfd;
 }
 
-/* bind function */
+/* bind function -- complete */
 int bind_func(int socketfd)
 {
-int status;
+
 struct addrinfo hints;
 struct addrinfo *res;
 memset(&hints, 0, sizeof(hints));   //make sure struct is empty
 hints.ai_family = AF_UNSPEC;        // dont care ipv4 or ipv6
 hints.ai_socktype = SOCK_STREAM;    // TCP
 hints.ai_flags = AI_PASSIVE;        // fill IP for me, might not need
+int status;
+//int ret;
 
 if ((status = getaddrinfo(NULL, "9000", &hints, &res)) != 0) {
                 perror("damn, socket failed");
@@ -194,12 +200,21 @@ if (bind(socketfd, res->ai_addr, res->ai_addrlen) == -1) {
                 close(socketfd);
                 perror("server bind issues smh");
 		exit(1);
-}
+}       //return to here in case
+/*
+  if (getaddrinfo(NULL, "9000", &hints, &res) != 0) {
+	  ret = 1;
+  }
+
+  if (bind(socketfd, res->ai_addr, res->ai_addrlen) != 0) {
+	  ret = 1;
+  } */
 freeaddrinfo(res);
 syslog(LOG_DEBUG, "binding and getting adress complete \n");
 printf("binding and getaddrinfo complete. \n");
-return 0;
+return 0;  //return back to null
 }
+
 
 /* sock stream to send and write */ 
 void read_stream(int newfd)
@@ -208,8 +223,9 @@ FILE *tmpfile;
    tmpfile = fopen(TMP_FILE, "rb"); //add b for binary?
    if (tmpfile == NULL) {
    perror("could no create and open to append");
-   exit(EXIT_FAILURE);
+   exit(1);
    }
+   
 
    while(1) {
 	   char char_val;
@@ -218,10 +234,12 @@ FILE *tmpfile;
 		   break;
 	   char_val = (char)c;
 	   send(newfd, &char_val, 1, 0);
+	  
    }
   fclose(tmpfile);
+ 
 } 
-
+/* opening file to buffer and write */
 char *buf_to_file(char *buf, int buf_len)
 {
 	FILE *tmpfile;
@@ -233,8 +251,18 @@ char *buf_to_file(char *buf, int buf_len)
 	fwrite(buf, 1, buf_len, tmpfile);
 	fclose(tmpfile);
 	free(buf);
-	return 0;
+	return NULL;
 }
 
-
+void add_sigActions() {
+ syslog(LOG_DEBUG, "adding sig actions success");
+	
+ struct sigaction act = {
+	 .sa_handler = handle_sig,
+ };
+/* act.sa_handler = handle_sig;
+ sigemptyset(&act.sa_mask); */ 
+ sigaction(SIGINT, &act, NULL);
+ sigaction(SIGTERM, &act, NULL);	
+}
 
