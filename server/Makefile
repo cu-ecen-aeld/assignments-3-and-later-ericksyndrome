@@ -1,6 +1,6 @@
-CROSS_COMPILE=aarch64-none-linux-gnu-gcc
+CROSS_COMPILE=
 CFLAGS=-Wall -Werror -g
-CC=gcc
+CC=$(CROSS_COMPILE)gcc
 
 default: all
 
