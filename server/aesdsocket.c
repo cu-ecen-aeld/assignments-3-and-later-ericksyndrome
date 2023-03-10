@@ -220,7 +220,7 @@ return 0;  //return back to null
 void read_stream(int newfd)
 {
 FILE *tmpfile;
-   tmpfile = fopen(TMP_FILE, "rb"); //add b for binary?
+   tmpfile = fopen(TMP_FILE, "r"); //add b for binary?
    if (tmpfile == NULL) {
    perror("could no create and open to append");
    exit(1);
@@ -243,7 +243,7 @@ FILE *tmpfile;
 char *buf_to_file(char *buf, int buf_len)
 {
 	FILE *tmpfile;
-        tmpfile	= fopen(TMP_FILE, "ab");
+        tmpfile	= fopen(TMP_FILE, "a+");
 	if (tmpfile == NULL) {
 		perror("cannot open buf to file");
 		exit(EXIT_FAILURE);
