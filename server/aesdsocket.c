@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <stdbool.h>
 
-#define _BSD_SOURCE
+
 #define SERVER_PORT     ("9000")
 #define MAXDATASIZE     (1024)
 #define TMP_FILE        ("/var/tmp/aesdsocketdata")
