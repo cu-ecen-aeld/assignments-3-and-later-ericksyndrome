@@ -29,16 +29,17 @@
 
 volatile sig_atomic_t cleanup_trigger = 0;
 int server_run = 0; //initially 1
-int socketfd = 0;
+int socketfd = -1; //was 0
 FILE *file_ptr = NULL; //file going to /var/tmp/ 
 pthread_t timer_thread; //global var for timer_thread
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t thread_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct ThreadNode { //this struct is used to manage node
 	pthread_t thread;
 	int newfd;  //peer data
 	//int run;    //used for controlled termination
-	pthread_mutex_t *mutex;
+	//pthread_mutex_t *mutex;
 	FILE *log;
 	int flag;  //contains params
 	SLIST_ENTRY(ThreadNode) entries;
@@ -61,7 +62,7 @@ struct ThreadNode *insert_node(struct ThreadList *head)
 //zero out memory for initiliaztion 
 int init(struct ThreadList *head) 
 {
-	SLIST_INIT(head);
+	SLIST_INIT(head);  //check
 	
 	//initiliaze vars
 	struct ThreadNode node;
@@ -76,18 +77,40 @@ int init(struct ThreadList *head)
 
 /*** adding thread to handle clients ***/
 void *handle_client_thread(void *threadp) {
-	//threadParams_t *threadParams = (threadParams_t *)threadp;
+	
 	struct ThreadNode* node = (struct ThreadNode*) threadp;
 	int newfd = node->newfd; //created an instance threadParams 
 	char buff[MAXDATASIZE];
 	memset(buff, 0, MAXDATASIZE); //zero mem
-	int bytes = 0;
+	//int bytes = 0;
 	
 	//below is handling the recv
+	while (server_run==1) {
+		int bytes = recv(newfd, buff, MAXDATASIZE - 1, 0);
+		if (bytes <= 0) {
+			break; // exit loop if no data or error
+		}
+		
+		// locking file mutex for writing data
+		pthread_mutex_lock(&log_mutex);
+		if (file_ptr != NULL) {
+			fprintf(file_ptr, "%s", buff);
+			fflush(file_ptr); //questionable
+		}
+		pthread_mutex_unlock(&log_mutex);
+		
+		//check for newline to break the loop
+		if (strpbrk(buff, "\n") != NULL) {
+			break;
+		}
+		memset(buff, 0, MAXDATASIZE);
+	}
+	/*
+	memset(buff, 0, MAXDATASIZE); 
 	while (server_run == 1 && (bytes=recv(newfd, buff, MAXDATASIZE-1, 0) > 0))
 	{
 		//acquirirng mutex
-		pthread_mutex_lock(node->mutex);
+		pthread_mutex_lock(&log_mutex);
 		
 		//writing to output log
 		if (node->log != NULL) {
@@ -103,9 +126,26 @@ void *handle_client_thread(void *threadp) {
 			break;
 		}
 		memset(buff, 0, MAXDATASIZE);
-	}
+	} */
 	
-	//below is handdling the bytes to send
+	//below is handling the bytes to send back
+	pthread_mutex_lock(&log_mutex);
+	fseek(file_ptr, 0, SEEK_SET);
+	while (server_run==1) {
+		ssize_t bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr);
+		if (bytes_rx == 0) {
+			break; //no more data to read
+		}
+		send(newfd, buff, bytes_rx, 0); //send data to client
+		memset( buff, 0, MAXDATASIZE);
+	}
+	pthread_mutex_unlock(&log_mutex);
+	
+	node->flag = 1; //set thread complete flaf
+	return NULL;
+} /*
+	
+	
 	if (server_run == 1) {
 		//acquring mutex
 		pthread_mutex_lock(node->mutex);
@@ -130,7 +170,8 @@ void *handle_client_thread(void *threadp) {
 	//exit thread
 	return NULL;
 }
-
+*/
+ /*
 void join_threads(struct ThreadList *head, int force_exit) //pass this in for reference
 {
 	struct ThreadNode *current, *tmp;
@@ -138,21 +179,23 @@ void join_threads(struct ThreadList *head, int force_exit) //pass this in for re
 	while (current != NULL)
 	{
 		tmp = SLIST_NEXT(current, entries);
-		if (current->flag == 1 || force_exit == 1) {
+		if (current->flag == 1 || force_exit == 1) { //look again
 			//join thread
 			pthread_join(current->thread, NULL);
 			//removal of node from list
 			SLIST_REMOVE(head, current, ThreadNode, entries);
 			//free allocated mem
 			free(current); 
-	}
+	} //SLIST_INIT(head, 
 	current=tmp;
 }
 } 
+*/
 
 //timer thread
 void *timer_thread_func(void *arg) {
-	pthread_mutex_t *mutex = (pthread_mutex_t *)arg;
+	//pthread_mutex_t *mutex = (pthread_mutex_t *)arg;
+	FILE * file = (FILE *)arg; //use passed file ptr
 	while (server_run) {
 		sleep(10); //waits 10 seconds
 		
@@ -162,8 +205,16 @@ void *timer_thread_func(void *arg) {
 		strftime(time_buffer, sizeof(time_buffer), "timestamp: %a, %d %b %Y %H:%M:%S", localtime(&now));
 		
 		//writitng timestamp to file
-		pthread_mutex_lock(mutex);
-		FILE *file = fopen(TMP_FILE, "a"); //append mode
+		pthread_mutex_lock(&log_mutex);
+		if (file != NULL) {
+			fprintf(file, "%s\n", time_buffer);
+			fflush(file);
+		}
+		pthread_mutex_unlock(&log_mutex);
+	}
+	return NULL;
+}
+	/*	FILE *file = fopen(TMP_FILE, "a"); //append mode
 		if (file) {
 			fprintf(file, "%s\n", time_buffer);
 			fclose(file);
@@ -172,13 +223,14 @@ void *timer_thread_func(void *arg) {
 	}
 	return NULL;
 } 
+*/
 
 void cleanup() {
 	//stop server
 	server_run = 0;
 	
 	//join timer thread
-	pthread_join(timer_thread, NULL);
+	pthread_join(timer_thread, NULL); //inspect
 	
 	if (socketfd > 0) {
 		shutdown(socketfd, SHUT_RDWR); //graceful shut down
@@ -192,8 +244,29 @@ void cleanup() {
 		file_ptr = NULL;
 	}
 	
-	join_threads(&threadList, 1); //cleans list as well
+	//clean up threads
+	struct ThreadNode *current, *tmp;
+	pthread_mutex_lock(&thread_list_mutex);
+	current = SLIST_FIRST(&threadList);
+	while (current != NULL) {
+		tmp = SLIST_NEXT(current, entries);
+		if (current->flag ==1) {
+			pthread_join(current->thread, NULL); //join current threads?
+			SLIST_REMOVE(&threadList, current, ThreadNode, entries);
+			free(current);
+		}
+		current = tmp;
+	}
+	pthread_mutex_unlock(&thread_list_mutex);
+		
+	//destroy mutexes
+	pthread_mutex_destroy(&log_mutex);
+	pthread_mutex_destroy(&thread_list_mutex);
 	syslog(LOG_CRIT, "cleanup complete");
+		/*
+	join_threads(&threadList, 1); //cleans list as well
+	pthread_mutex_destroy(&log_mutex);
+	syslog(LOG_CRIT, "cleanup complete"); */
 }
 
 void handle_sig(int sig)
@@ -214,8 +287,8 @@ syslog(LOG_DEBUG, "adding sig actions success");
 struct sigaction act = {
 	 .sa_handler = handle_sig,
  };
-/* act.sa_handler = handle_sig;
- sigemptyset(&act.sa_mask); */ 
+// act.sa_handler = handle_sig;
+ sigemptyset(&act.sa_mask);  
  sigaction(SIGINT, &act, NULL);
  sigaction(SIGTERM, &act, NULL);	
 }
@@ -236,20 +309,21 @@ int main(int argc, char *argv[])
 	}
 	syslog(LOG_INFO,"usage is proper. \n");	
     
+    
     //set up signal handler      
     add_sigActions();
     
     //initialize
     if (init(&threadList) == -1)
     {
-		exit(-1);
+		exit(EXIT_FAILURE);
 	}
 	
 	//getting socket fd
-	int socketfd = socket(AF_INET, SOCK_STREAM, 0);
+	socketfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (socketfd == -1) {
 		perror("socket failed");
-		exit(-1);
+		exit(EXIT_FAILURE);
 	}
 	
 	//set socket options
@@ -287,14 +361,14 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 	
-	pthread_create(&timer_thread, NULL, timer_thread_func, &log_mutex);
+	pthread_create(&timer_thread, NULL, timer_thread_func, file_ptr); //check last arg
 	
 	//while loop as long as run is enabled
 	while (server_run)
 	{
 		if (cleanup_trigger) {
-			server_run = 0;  //server loop is exited
-			cleanup();
+		//	server_run = 0;  //server loop is exited might not need?
+			//cleanup();
 			break;
 		}
 		//accept incoming conections
@@ -304,8 +378,29 @@ int main(int argc, char *argv[])
 		if (peer == -1)
 		{
 			perror("accept failed");
+			continue; //skip to next iteration if accept fails, this is questionable
 		}
+		
+		//handle accpeted connection
 		char peer_ip[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET, &(peer_addr.sin_addr), peer_ip, INET_ADDRSTRLEN);
+		syslog(LOG_INFO, "Accepted connection from: %s", peer_ip);
+		
+		struct ThreadNode *node = insert_node(&threadList);
+		node->log = file_ptr;
+		node->newfd = peer;
+		node->flag = 0;
+		
+		pthread_create(&node->thread, NULL, handle_client_thread, (void *)node);
+	}
+	//now time to cleanup if not triggered by signal
+	if (!cleanup_trigger) {
+		cleanup();
+	}
+	syslog(LOG_INFO, "server exiting");
+	exit(EXIT_SUCCESS);
+}
+/*
 		if (inet_ntop(AF_INET, &(peer_addr.sin_addr), peer_ip, INET_ADDRSTRLEN) == NULL)
 		{
 			perror("call to inet_ntop failed");
@@ -317,9 +412,10 @@ int main(int argc, char *argv[])
 			node->log = file_ptr;
 			node->mutex = &log_mutex;
 			node->newfd = peer;
-			node->flag = 0;
+			node->flag = 0; //check
 			//node->run = 1; //check
 			pthread_create(&node->thread, NULL, handle_client_thread, (void *)node);
+			//join_threads(&threadList, 0); //experiment
 		}
 		join_threads(&threadList, 0); //joins threads and doesn't force exit
 	}
@@ -331,7 +427,7 @@ int main(int argc, char *argv[])
 	syslog(LOG_INFO, "Server exiting");
 	exit(EXIT_SUCCESS);
 }
-			
+*/			
 	
 	
 
