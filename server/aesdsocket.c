@@ -16,248 +16,202 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <pthread.h>
+#include <sys/queue.h>
+
+
 
 
 #define SERVER_PORT     ("9000")
 #define MAXDATASIZE     (1024)
 #define TMP_FILE        ("/var/tmp/aesdsocketdata")
+#define NUM_THREADS      (10) //not sure yet
 
-static bool daemon_time = false;
-static bool kill_system = false;
-
-/**** declaring functions beforehand ****/
-void handle_clients(int socketfd);
-char *buf_to_file(char *buf, int buf_len);
-void read_stream(int newfd);
-int get_socketfd();
-int bind_func(int socketfd);
+volatile sig_atomic_t cleanup_trigger = 0;
+int server_run = 0; //initially 1
 int socketfd = 0;
-void add_sigActions();
+FILE *file_ptr = NULL; //file going to /var/tmp/ 
+pthread_t timer_thread; //global var for timer_thread
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+typedef struct ThreadNode { //this struct is used to manage node
+	pthread_t thread;
+	int newfd;  //peer data
+	//int run;    //used for controlled termination
+	pthread_mutex_t *mutex;
+	FILE *log;
+	int flag;  //contains params
+	SLIST_ENTRY(ThreadNode) entries;
+	//int *run;    //used for controlled termination
+} ThreadNode;
 
- void handle_sig(int sig)
+//needs headname and type
+SLIST_HEAD(ThreadList, ThreadNode) threadList = SLIST_HEAD_INITIALIZER(threadList);
+
+//inserts new entry into a list and returns ptr to inserted node
+struct ThreadNode *insert_node(struct ThreadList *head)
 {
-	if (sig == SIGINT || sig == SIGTERM) {
-		kill_system = true;
-	}
-} 
-
-/* beej uses this function to get sockaddr ipv4/ipv6, so I will too */
-void *get_in_addr(struct sockaddr *sa)
-{
-	if (sa->sa_family == AF_INET) {
-		return &(((struct sockaddr_in*)sa)->sin_addr);
-	}
-	return &(((struct sockaddr_in6*)sa)->sin6_addr);
+	struct ThreadNode *new_node = malloc(sizeof(struct ThreadNode));
+	memset(new_node, 0, sizeof(struct ThreadNode));
+	SLIST_INSERT_HEAD(head, new_node, entries);
+	return new_node;
 }
 
-int main(int argc, char *argv[])
+
+//zero out memory for initiliaztion 
+int init(struct ThreadList *head) 
 {
+	SLIST_INIT(head);
 	
-//verify proper usage
-if (argc >= 2 && !strcmp(argv[1], "-d")) {
-               printf("usage is proper. \n");
-	       daemon_time = true;
-
-               }
-          /*     else {
-       printf("usage invalid");
-       exit(1);
-       } */
-
-  add_sigActions();
-
-  int socketfd = get_socketfd();
-  
-  bind_func(socketfd);
- 
-  if (fork() != 0) {
-	  exit(0);
-  }
-
-  //listen
-  listen(socketfd, 5);
-
-  while(!kill_system) {
-	  handle_clients(socketfd);
-	  
-  }
-
-  close(socketfd);
-  remove(TMP_FILE);	       
+	//initiliaze vars
+	struct ThreadNode node;
+	memset(&node, 0, sizeof(struct ThreadNode)); //zero out memory for node
+	
+	//set run or control variable
+	server_run = 1;
+	syslog(LOG_CRIT, "zery memory\n");
+	
+	return 0;
 }
 
-/* accept clients and buffer */
-void handle_clients(int socketfd)
-{
-
-//some info for the peer struct before accept()
-struct sockaddr_storage peer;
-socklen_t peer_addr_size;
-peer_addr_size = sizeof(peer);
-/*int newfd;  --attempt */
-//char client[INET6_ADDRSTRLEN];  //string for clients IP
-//accepting
-/*   if ((newfd = accept(socketfd, (struct sockaddr *)&peer, &peer_addr_size) <0)) {
-                perror("did not accept");
-                syslog(LOG_DEBUG, "could not accept. \n");
-		exit(1);
-                } //replaced struct sockaddr */
-  int newfd = accept(socketfd, (void *)&peer, &peer_addr_size);
-
-  if (newfd < 0) {
-	  if (kill_system)
-		  return;
-	  exit(1);
-  } else {
-	  char client[INET6_ADDRSTRLEN];
-	  char *buf = NULL;
-	  int buf_size, buf_len;
-	  ssize_t bytes_rx;
-
-//function to convert ip to something printable
-memset(client, 0, sizeof(client));
-inet_ntop(peer.ss_family, get_in_addr((struct sockaddr *)&peer), client, sizeof(client));
-printf("server got connection from: %s \n", client);
-syslog(LOG_INFO, "Accepted connection from: %s \n", client);
-
-
-
-  while(!kill_system) {
-	if (buf == NULL) {
-		buf_len = 0;
-		buf_size = 0;
+/*** adding thread to handle clients ***/
+void *handle_client_thread(void *threadp) {
+	//threadParams_t *threadParams = (threadParams_t *)threadp;
+	struct ThreadNode* node = (struct ThreadNode*) threadp;
+	int newfd = node->newfd; //created an instance threadParams 
+	char buff[MAXDATASIZE];
+	memset(buff, 0, MAXDATASIZE); //zero mem
+	int bytes = 0;
+	
+	//below is handling the recv
+	while (server_run == 1 && (bytes=recv(newfd, buff, MAXDATASIZE-1, 0) > 0))
+	{
+		//acquirirng mutex
+		pthread_mutex_lock(node->mutex);
+		
+		//writing to output log
+		if (node->log != NULL) {
+			fprintf(node->log, "%s", buff);
+		}
+		
+		//releasing mutex
+		pthread_mutex_unlock(node->mutex);
+		
+		//break when a newline is found
+		if (strpbrk(buff, "\n") != NULL)
+		{
+			break;
+		}
+		memset(buff, 0, MAXDATASIZE);
 	}
-        if (buf_len == buf_size) {
-	       if (buf_size == 0) {
-	       buf_size = 100;
-	       } else {
-	         buf_size *= 2;
-	       }
-       buf = realloc(buf, buf_size);
+	
+	//below is handdling the bytes to send
+	if (server_run == 1) {
+		//acquring mutex
+		pthread_mutex_lock(node->mutex);
+		//seeking to beggining of file
+		if (fseek(node->log, 0, SEEK_SET) != 0) {
+		perror("Failed to seek to the bof\n"); }
+		
+		//defining bytes rx to echo back
+		ssize_t bytes_rx = 0;
+		while(server_run == 1 && (bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, node->log)) != 0)
+		{
+			if (send(newfd, buff, bytes_rx, 0) != 0) {
+				perror("cannot send fam");
+			}
+			memset(buff, 0, MAXDATASIZE);
+		}
+		//now release mutex
+		pthread_mutex_unlock(node->mutex);
 	}
- bytes_rx = recv(newfd, buf + buf_len, 1, 0);
- if (bytes_rx == -1 || bytes_rx == 0) {
-	break;
- } else if (bytes_rx == 1) {
-    buf_len++;
- if (buf[buf_len-1] == '\n') {
-     write(1, buf, buf_len);
-    
-     buf = buf_to_file(buf, buf_len);
-     read_stream(newfd);
- }
- }
-}  //close while loop 
-  if (buf) {
-	  free(buf);
-	  buf = NULL;
-	  
-  }
-  close(newfd);
-  
-}
-}
-
-/* get socket fd and socket function */
-int get_socketfd()
-{
-	int yes = 1;
-	syslog(LOG_DEBUG, "starting socket func \n");
-	int socketfd;
-	if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ) {
-          // perror("not good for your socket");
-           exit(1);     
-        }/*
-	if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes))<0){
-                perror("sockopt man");
-                exit(EXIT_FAILURE);
-        }*/
-	setsockopt(socketfd, IPPROTO_TCP, SO_REUSEADDR, &yes, sizeof(yes));
-	syslog(LOG_DEBUG, "socket func complete \n");
-	return socketfd;
-}
-
-/* bind function -- complete */
-int bind_func(int socketfd)
-{
-
-struct addrinfo hints;
-struct addrinfo *res;
-memset(&hints, 0, sizeof(hints));   //make sure struct is empty
-hints.ai_family = AF_UNSPEC;        // dont care ipv4 or ipv6
-hints.ai_socktype = SOCK_STREAM;    // TCP
-hints.ai_flags = AI_PASSIVE;        // fill IP for me, might not need
-int status;
-//int ret;
-
-if ((status = getaddrinfo(NULL, "9000", &hints, &res)) != 0) {
-                perror("damn, socket failed");
-                exit(EXIT_FAILURE);
-        }
-
-if (bind(socketfd, res->ai_addr, res->ai_addrlen) == -1) {
-                close(socketfd);
-                perror("server bind issues smh");
-		exit(1);
-}       //return to here in case
-/*
-  if (getaddrinfo(NULL, "9000", &hints, &res) != 0) {
-	  ret = 1;
-  }
-
-  if (bind(socketfd, res->ai_addr, res->ai_addrlen) != 0) {
-	  ret = 1;
-  } */
-freeaddrinfo(res);
-syslog(LOG_DEBUG, "binding and getting adress complete \n");
-printf("binding and getaddrinfo complete. \n");
-return 0;  //return back to null
-}
-
-
-/* sock stream to send and write */ 
-void read_stream(int newfd)
-{
-FILE *tmpfile;
-   tmpfile = fopen(TMP_FILE, "r"); //add b for binary?
-   if (tmpfile == NULL) {
-   perror("could no create and open to append");
-   exit(1);
-   }
-   
-
-   while(1) {
-	   char char_val;
-	   int c = fgetc(tmpfile);
-	   if (c==EOF)
-		   break;
-	   char_val = (char)c;
-	   send(newfd, &char_val, 1, 0);
-	  
-   }
-  fclose(tmpfile);
- 
-} 
-/* opening file to buffer and write */
-char *buf_to_file(char *buf, int buf_len)
-{
-	FILE *tmpfile;
-        tmpfile	= fopen(TMP_FILE, "a+");
-	if (tmpfile == NULL) {
-		perror("cannot open buf to file");
-		exit(EXIT_FAILURE);
-	}
-	fwrite(buf, 1, buf_len, tmpfile);
-	fclose(tmpfile);
-	free(buf);
+	//set complete flag
+	node->flag = 1;
+	//exit thread
 	return NULL;
 }
 
-void add_sigActions() {
- syslog(LOG_DEBUG, "adding sig actions success");
+void join_threads(struct ThreadList *head, int force_exit) //pass this in for reference
+{
+	struct ThreadNode *current, *tmp;
+	current = SLIST_FIRST(head);
+	while (current != NULL)
+	{
+		tmp = SLIST_NEXT(current, entries);
+		if (current->flag == 1 || force_exit == 1) {
+			//join thread
+			pthread_join(current->thread, NULL);
+			//removal of node from list
+			SLIST_REMOVE(head, current, ThreadNode, entries);
+			//free allocated mem
+			free(current); 
+	}
+	current=tmp;
+}
+} 
+
+//timer thread
+void *timer_thread_func(void *arg) {
+	pthread_mutex_t *mutex = (pthread_mutex_t *)arg;
+	while (server_run) {
+		sleep(10); //waits 10 seconds
+		
+		//get current time
+		time_t now = time(NULL);
+		char time_buffer[100];
+		strftime(time_buffer, sizeof(time_buffer), "timestamp: %a, %d %b %Y %H:%M:%S", localtime(&now));
+		
+		//writitng timestamp to file
+		pthread_mutex_lock(mutex);
+		FILE *file = fopen(TMP_FILE, "a"); //append mode
+		if (file) {
+			fprintf(file, "%s\n", time_buffer);
+			fclose(file);
+		}
+		pthread_mutex_unlock(mutex);
+	}
+	return NULL;
+} 
+
+void cleanup() {
+	//stop server
+	server_run = 0;
 	
- struct sigaction act = {
+	//join timer thread
+	pthread_join(timer_thread, NULL);
+	
+	if (socketfd > 0) {
+		shutdown(socketfd, SHUT_RDWR); //graceful shut down
+		close(socketfd);
+		socketfd = -1;   //prevents reuse of old socket fd
+	}
+	
+	//close log file
+	if (file_ptr != NULL) {
+		fclose(file_ptr);
+		file_ptr = NULL;
+	}
+	
+	join_threads(&threadList, 1); //cleans list as well
+	syslog(LOG_CRIT, "cleanup complete");
+}
+
+void handle_sig(int sig)
+{
+	if (sig == SIGINT || sig == SIGTERM) {
+	/*	syslog(LOG_CRIT, "caught signal, exiting now");
+		//shut server
+		cleanup();
+		exit(EXIT_SUCCESS);
+	}*/
+	cleanup_trigger = 1; //this is for thread safety
+}
+} 
+
+void add_sigActions() {
+syslog(LOG_DEBUG, "adding sig actions success");
+	
+struct sigaction act = {
 	 .sa_handler = handle_sig,
  };
 /* act.sa_handler = handle_sig;
@@ -266,3 +220,124 @@ void add_sigActions() {
  sigaction(SIGTERM, &act, NULL);	
 }
 
+int main(int argc, char *argv[])
+{
+	
+	
+	
+//verify proper usage
+    if (argc >= 2 && !strcmp(argv[1], "-d"))
+    {
+		if (daemon(0, 0) == -1)
+		{
+			perror("Daemon time failed");
+			exit(-1);
+		}
+	}
+	syslog(LOG_INFO,"usage is proper. \n");	
+    
+    //set up signal handler      
+    add_sigActions();
+    
+    //initialize
+    if (init(&threadList) == -1)
+    {
+		exit(-1);
+	}
+	
+	//getting socket fd
+	int socketfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (socketfd == -1) {
+		perror("socket failed");
+		exit(-1);
+	}
+	
+	//set socket options
+	if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) == -1)
+	{
+		perror("sockopt failed");
+		exit(-1);
+	}
+	
+	//binding socket to address and port
+	struct sockaddr_in server_address;
+	server_address.sin_family = AF_INET;
+	server_address.sin_port = htons(9000);
+	server_address.sin_addr.s_addr = INADDR_ANY;
+	
+	//bind
+	if (bind(socketfd, (struct sockaddr *)&server_address, sizeof(server_address)) == -1)
+	{
+		perror("Bind failed");
+		exit(-1);
+	}
+	
+	//listening for connections
+	if (listen(socketfd, 10) == -1)
+	{
+		perror("listen failed");
+		exit(-1);
+	}
+	
+	//opening output file
+	file_ptr = fopen(TMP_FILE, "w+");
+	if (file_ptr == NULL)
+	{
+		perror("failed to open output file");
+		exit(-1);
+	}
+	
+	pthread_create(&timer_thread, NULL, timer_thread_func, &log_mutex);
+	
+	//while loop as long as run is enabled
+	while (server_run)
+	{
+		if (cleanup_trigger) {
+			server_run = 0;  //server loop is exited
+			cleanup();
+			break;
+		}
+		//accept incoming conections
+		struct sockaddr_in peer_addr;
+		socklen_t peer_len = sizeof(peer_addr);
+		int peer = accept(socketfd, (struct sockaddr *)&peer_addr, &peer_len);
+		if (peer == -1)
+		{
+			perror("accept failed");
+		}
+		char peer_ip[INET_ADDRSTRLEN];
+		if (inet_ntop(AF_INET, &(peer_addr.sin_addr), peer_ip, INET_ADDRSTRLEN) == NULL)
+		{
+			perror("call to inet_ntop failed");
+		}
+		if (server_run)
+		{
+			syslog(LOG_INFO, "Accepted connection from: %s", peer_ip);
+			struct ThreadNode *node = insert_node(&threadList); //check this
+			node->log = file_ptr;
+			node->mutex = &log_mutex;
+			node->newfd = peer;
+			node->flag = 0;
+			//node->run = 1; //check
+			pthread_create(&node->thread, NULL, handle_client_thread, (void *)node);
+		}
+		join_threads(&threadList, 0); //joins threads and doesn't force exit
+	}
+	if (!cleanup_trigger) { //if not triggered by signal call here
+		cleanup();
+	}
+	//pthread_join(timer_thread, NULL);
+	//cleanup();
+	syslog(LOG_INFO, "Server exiting");
+	exit(EXIT_SUCCESS);
+}
+			
+	
+	
+
+			
+		
+	
+		
+	
+	

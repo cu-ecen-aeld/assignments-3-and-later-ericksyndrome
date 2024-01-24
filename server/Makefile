@@ -1,5 +1,7 @@
+INCLUDE_DIRS =
+LIB_DIRS =
 CROSS_COMPILE=
-CFLAGS=-Wall -Werror -g
+CFLAGS=-Wall -Werror -g 
 CC=$(CROSS_COMPILE)gcc
 
 default: all
@@ -7,7 +9,7 @@ default: all
 all: aesdsocket
 
 aesdsocket: aesdsocket.c
-	$(CC) $(CFLAGS) aesdsocket.c -o aesdsocket
+	$(CC) $(CFLAGS) aesdsocket.c -o aesdsocket -lpthread 
 
 clean:
 	rm -rf *.o aesdsocket
