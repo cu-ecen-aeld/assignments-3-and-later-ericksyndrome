@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 ericksyndrome
+=======
+aesd-example
+>>>>>>> yocto-assignments-base/master
