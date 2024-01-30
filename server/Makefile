@@ -5,6 +5,7 @@ CFLAGS ?= -Wall -Werror -g
 CC ?= $(CROSS_COMPILE)gcc
 LDFLAGS ?= -lpthread -lrt
 TARGET ?= aesdsocket
+#might fix above
 
 default: all
 
