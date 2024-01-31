@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 app="aesdsocket -d"
 cd /etc/init.d/
 case "$1" in 
