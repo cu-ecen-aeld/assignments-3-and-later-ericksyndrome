@@ -1,5 +1,1 @@
-<<<<<<< HEAD
 assignment6
-=======
-assignment6-yocto
->>>>>>> yocto-assignments-base/master
