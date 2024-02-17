@@ -17,6 +17,8 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+#include <linux/mutex.h>
+#include <linux/slab.h>
 #include "aesdchar.h"
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -28,13 +30,12 @@ struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    
     struct aesd_dev *dev;
+    PDEBUG("open");
     dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = dev;
+    
     return 0;
 }
 
@@ -84,7 +85,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 		*f_pos += count; //update file position
 		retval = count;
 	}
-	mutex_unlock(dev->lock);     
+	mutex_unlock(&dev->lock);     
     return retval;
 }
 
@@ -107,7 +108,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 			mutex_unlock(&dev->lock);
 			return -ENOMEM;
 		}
-		dev->w_buff = count;
+		dev->w_buff_size = count;
 		retval = count;
 	}
 	
@@ -131,7 +132,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	
 	else { //checking for newline
 		for (i = 0; i < count; i++) {
-			if (dev->w_buff[dev->w_buff_size - count + i] == '\n');
+			if (dev->w_buff[dev->w_buff_size - count + i] == '\n')
 			{
 				newline = true;
 				break;
@@ -206,6 +207,8 @@ int aesd_init_module(void)
 void aesd_cleanup_module(void)
 {
     dev_t devno = MKDEV(aesd_major, aesd_minor);
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
 
     cdev_del(&aesd_device.cdev);
 
@@ -219,13 +222,13 @@ void aesd_cleanup_module(void)
 	}
 	
 	// manually freeing each allocated buffer entry
-	uint8_t index;
-	struct aesd_buffer_entry *entry;
+	
+	
 	//check again
 	AESD_CIRCULAR_BUFFER_FOREACH(entry, &aesd_device.buff, index) {
-		if entry(entry->buffptr != NULL) {
+		if (entry->buffptr != NULL) {
 			kfree((void *)entry->buffptr);
-			entry->buffptr == NULL;
+			//entry->buffptr == NULL;
 		}
 	}
 
