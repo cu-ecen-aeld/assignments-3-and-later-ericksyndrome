@@ -25,7 +25,7 @@
 #define SERVER_PORT     ("9000")
 #define MAXDATASIZE     (1024)
 #define TMP_FILE        ("/var/tmp/aesdsocketdata")
-#define NUM_THREADS      (10) //not sure yet
+#define NUM_THREADS     (10) 
 
 volatile sig_atomic_t cleanup_trigger = 0;
 int server_run = 0; //initially 1
@@ -105,28 +105,7 @@ void *handle_client_thread(void *threadp) {
 		}
 		memset(buff, 0, MAXDATASIZE);
 	}
-	/*
-	memset(buff, 0, MAXDATASIZE); 
-	while (server_run == 1 && (bytes=recv(newfd, buff, MAXDATASIZE-1, 0) > 0))
-	{
-		//acquirirng mutex
-		pthread_mutex_lock(&log_mutex);
-		
-		//writing to output log
-		if (node->log != NULL) {
-			fprintf(node->log, "%s", buff);
-		}
-		
-		//releasing mutex
-		pthread_mutex_unlock(node->mutex);
-		
-		//break when a newline is found
-		if (strpbrk(buff, "\n") != NULL)
-		{
-			break;
-		}
-		memset(buff, 0, MAXDATASIZE);
-	} */
+	
 	
 	//below is handling the bytes to send back
 	pthread_mutex_lock(&log_mutex);
@@ -143,54 +122,7 @@ void *handle_client_thread(void *threadp) {
 	
 	node->flag = 1; //set thread complete flaf
 	return NULL;
-} /*
-	
-	
-	if (server_run == 1) {
-		//acquring mutex
-		pthread_mutex_lock(node->mutex);
-		//seeking to beggining of file
-		if (fseek(node->log, 0, SEEK_SET) != 0) {
-		perror("Failed to seek to the bof\n"); }
-		
-		//defining bytes rx to echo back
-		ssize_t bytes_rx = 0;
-		while(server_run == 1 && (bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, node->log)) != 0)
-		{
-			if (send(newfd, buff, bytes_rx, 0) != 0) {
-				perror("cannot send fam");
-			}
-			memset(buff, 0, MAXDATASIZE);
-		}
-		//now release mutex
-		pthread_mutex_unlock(node->mutex);
-	}
-	//set complete flag
-	node->flag = 1;
-	//exit thread
-	return NULL;
-}
-*/
- /*
-void join_threads(struct ThreadList *head, int force_exit) //pass this in for reference
-{
-	struct ThreadNode *current, *tmp;
-	current = SLIST_FIRST(head);
-	while (current != NULL)
-	{
-		tmp = SLIST_NEXT(current, entries);
-		if (current->flag == 1 || force_exit == 1) { //look again
-			//join thread
-			pthread_join(current->thread, NULL);
-			//removal of node from list
-			SLIST_REMOVE(head, current, ThreadNode, entries);
-			//free allocated mem
-			free(current); 
-	} //SLIST_INIT(head, 
-	current=tmp;
-}
 } 
-*/
 
 //timer thread
 void *timer_thread_func(void *arg) {
@@ -214,16 +146,6 @@ void *timer_thread_func(void *arg) {
 	}
 	return NULL;
 }
-	/*	FILE *file = fopen(TMP_FILE, "a"); //append mode
-		if (file) {
-			fprintf(file, "%s\n", time_buffer);
-			fclose(file);
-		}
-		pthread_mutex_unlock(mutex);
-	}
-	return NULL;
-} 
-*/
 
 void cleanup() {
 	//stop server
@@ -400,40 +322,3 @@ int main(int argc, char *argv[])
 	syslog(LOG_INFO, "server exiting");
 	exit(EXIT_SUCCESS);
 }
-/*
-		if (inet_ntop(AF_INET, &(peer_addr.sin_addr), peer_ip, INET_ADDRSTRLEN) == NULL)
-		{
-			perror("call to inet_ntop failed");
-		}
-		if (server_run)
-		{
-			syslog(LOG_INFO, "Accepted connection from: %s", peer_ip);
-			struct ThreadNode *node = insert_node(&threadList); //check this
-			node->log = file_ptr;
-			node->mutex = &log_mutex;
-			node->newfd = peer;
-			node->flag = 0; //check
-			//node->run = 1; //check
-			pthread_create(&node->thread, NULL, handle_client_thread, (void *)node);
-			//join_threads(&threadList, 0); //experiment
-		}
-		join_threads(&threadList, 0); //joins threads and doesn't force exit
-	}
-	if (!cleanup_trigger) { //if not triggered by signal call here
-		cleanup();
-	}
-	//pthread_join(timer_thread, NULL);
-	//cleanup();
-	syslog(LOG_INFO, "Server exiting");
-	exit(EXIT_SUCCESS);
-}
-*/			
-	
-	
-
-			
-		
-	
-		
-	
-	
