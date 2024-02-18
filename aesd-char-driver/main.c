@@ -108,13 +108,14 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 			mutex_unlock(&dev->lock);
 			return -ENOMEM;
 		}
-		dev->w_buff_size = count;
-		retval = count;
+		//dev->w_buff_size = count;
+		//retval = count;
+		dev->w_buff_size = 0;
 	}
 	
 	// dont need to use kfree(dev->w_buff) as krealloc does this for me
 	// if it moves buffer to a new location 
-	else {
+	/*else {
 		char *new_buff = krealloc(dev->w_buff, dev->w_buff_size + count, GFP_KERNEL);
 		if (!new_buff) {
 			mutex_unlock(&dev->lock);
@@ -123,7 +124,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		dev->w_buff = new_buff;
 		//dev->w_buff_size += count;
 		retval = count;
-	}
+	} */
 	//void casting to not worry about type and just copy data to it
 	copied_bytes = copy_from_user((void *)&dev->w_buff[dev->w_buff_size - count], buf, count);
 	if (copied_bytes != 0) {
@@ -131,14 +132,19 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	}
 	
 	else { //checking for newline
-		for (i = 0; i < count; i++) {
-			if (dev->w_buff[dev->w_buff_size - count + i] == '\n')
+		//this is new below
+		dev->w_buff_size += (count-copied_bytes); //update buffer size
+		
+		for (i = dev->w_buff_size - (count - copied_bytes); i < dev->w_buff_size; i++) {
+			if (dev->w_buff[i] == '\n')
 			{
 				newline = true;
 				break;
 			}
 		}
-	}
+	retval = count - copied_bytes;
+	
+	
 	
 	// if newline found add to circular buffer
 	if (newline) {
@@ -150,7 +156,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		dev->w_buff_size = 0;
 		}
 	mutex_unlock(&dev->lock);
+}
     return retval;
+	
 }
 
 struct file_operations aesd_fops = {

@@ -22,6 +22,7 @@ PWD       := $(shell pwd)
 
 modules:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
+	chmod +x *.ko
 
 endif
 
