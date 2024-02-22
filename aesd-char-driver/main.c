@@ -98,9 +98,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     int newline = 0;
     size_t i;   
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
+    /**
+     * TODO: handle write
+     */
     if (mutex_lock_interruptible(&dev->lock))
 		return -ERESTARTSYS;
-	
+
 	//allocating buffer or expanding as needed
 	if (dev->w_buff == NULL) {
 		dev->w_buff = kmalloc(count, GFP_KERNEL);
@@ -108,14 +111,13 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 			mutex_unlock(&dev->lock);
 			return -ENOMEM;
 		}
-		//dev->w_buff_size = count;
-		//retval = count;
-		dev->w_buff_size = 0;
+		//dev->w_buff = count;
+		retval = count;
 	}
-	
+
 	// dont need to use kfree(dev->w_buff) as krealloc does this for me
 	// if it moves buffer to a new location 
-	/*else {
+	else {
 		char *new_buff = krealloc(dev->w_buff, dev->w_buff_size + count, GFP_KERNEL);
 		if (!new_buff) {
 			mutex_unlock(&dev->lock);
@@ -124,43 +126,35 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		dev->w_buff = new_buff;
 		//dev->w_buff_size += count;
 		retval = count;
-	} */
+	}
 	//void casting to not worry about type and just copy data to it
 	copied_bytes = copy_from_user((void *)&dev->w_buff[dev->w_buff_size - count], buf, count);
 	if (copied_bytes != 0) {
 		retval = -EFAULT;
 	}
-	
+
 	else { //checking for newline
-		//this is new below
-		dev->w_buff_size += (count-copied_bytes); //update buffer size
-		
-		for (i = dev->w_buff_size - (count - copied_bytes); i < dev->w_buff_size; i++) {
-			if (dev->w_buff[i] == '\n')
+		for (i = 0; i < count; i++) {
+			if (dev->w_buff[dev->w_buff_size - count + i] == '\n')
 			{
 				newline = true;
 				break;
 			}
 		}
-	retval = count - copied_bytes;
-	
-	
-	
+	}
+
 	// if newline found add to circular buffer
 	if (newline) {
 		struct aesd_buffer_entry new_entry = { .buffptr = dev->w_buff, .size = dev->w_buff_size };
 		aesd_circular_buffer_add_entry(&dev->buff, &new_entry);
-		
+
 		//reset for next write
 		dev->w_buff = NULL;
 		dev->w_buff_size = 0;
 		}
 	mutex_unlock(&dev->lock);
-}
     return retval;
-	
 }
-
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
