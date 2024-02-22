@@ -95,6 +95,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     struct aesd_dev* dev = (struct aesd_dev*)filp->private_data;
     ssize_t retval = -ENOMEM;
     size_t copied_bytes = 0;
+    size_t bytes_written;
     int newline = 0;
     size_t i;   
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
@@ -111,13 +112,13 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 			mutex_unlock(&dev->lock);
 			return -ENOMEM;
 		}
-		//dev->w_buff = count;
-		retval = count;
+		dev->w_buff = 0; //staring with a clean buffer of correct size
+		//retval = count;
 	}
 
 	// dont need to use kfree(dev->w_buff) as krealloc does this for me
 	// if it moves buffer to a new location 
-	else {
+	else { //buffer exists here and its time to resize for new data
 		char *new_buff = krealloc(dev->w_buff, dev->w_buff_size + count, GFP_KERNEL);
 		if (!new_buff) {
 			mutex_unlock(&dev->lock);
@@ -128,30 +129,50 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		retval = count;
 	}
 	//void casting to not worry about type and just copy data to it
-	copied_bytes = copy_from_user((void *)&dev->w_buff[dev->w_buff_size - count], buf, count);
+	//changed - count from buff_size
+	copied_bytes = copy_from_user((void *)&dev->w_buff[dev->w_buff_size], buf, count);
 	if (copied_bytes != 0) {
 		retval = -EFAULT;
 	}
 
-	else { //checking for newline
-		for (i = 0; i < count; i++) {
-			if (dev->w_buff[dev->w_buff_size - count + i] == '\n')
+	else { 
+		
+		bytes_written = count - copied_bytes;
+		dev->w_buff_size += bytes_written; //updating buffer size
+		retval = bytes_written;
+		
+		//check for newline
+		for (i = 0; i < bytes_written; i++) {
+			if (dev->w_buff[dev->w_buff_size - bytes_written + i] == '\n')
 			{
 				newline = true;
 				break;
 			}
 		}
-	}
+	
 
 	// if newline found add to circular buffer
 	if (newline) {
-		struct aesd_buffer_entry new_entry = { .buffptr = dev->w_buff, .size = dev->w_buff_size };
+		struct aesd_buffer_entry new_entry = { .buffptr = kmalloc(dev->w_buff_size, GFP_KERNEL), .size = dev->w_buff_size };
+		
+		if (new_entry.buffptr == NULL) {
+			mutex_unlock(&dev->lock);
+			return -ENOMEM;
+		}
+		
+		//copy write buffer to the new entry
+		//doing this cast, could be dangerous
+		memcpy((void *)new_entry.buffptr, dev->w_buff, dev->w_buff_size);
+		//adding to circular buffer
+		
 		aesd_circular_buffer_add_entry(&dev->buff, &new_entry);
 
 		//reset for next write
+		kfree(dev->w_buff);
 		dev->w_buff = NULL;
 		dev->w_buff_size = 0;
 		}
+	}
 	mutex_unlock(&dev->lock);
     return retval;
 }
