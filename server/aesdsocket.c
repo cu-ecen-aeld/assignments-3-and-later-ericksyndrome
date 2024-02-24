@@ -84,10 +84,10 @@ int init(struct ThreadList *head)
 void *handle_client_thread(void *threadp) {
 	
 	struct ThreadNode* node = (struct ThreadNode*) threadp;
-	int newfd = node->newfd; //created an instance threadParams 
+	int newfd = node->newfd; 
 	char buff[MAXDATASIZE];
 	memset(buff, 0, MAXDATASIZE); //zero mem
-	
+	FILE * file_ptr;
 	
 	//below is handling the recv
 	while (server_run==1) {
@@ -99,13 +99,12 @@ void *handle_client_thread(void *threadp) {
 		// locking file mutex for writing data
 		pthread_mutex_lock(&log_mutex);
 		//making mods for a8 below
-		FILE * file_ptr = fopen(DATA_FILE, "a"); //open in append mode
+		file_ptr = fopen(DATA_FILE, "a"); //open in append mode
 		if (file_ptr != NULL) {
-			int write_bytes = fwrite(buff, sizeof(char), bytes, file_ptr);
-			//fprintf(file_ptr, "%s", buff);
+			fwrite(buff, sizeof(char), bytes, file_ptr);
 			fflush(file_ptr); //questionable, flushing stream
 			fclose(file_ptr); //closing file to ensure data is written and fd is freed
-			file_ptr = NULL; //questionable
+			//file_ptr = NULL; //questionable
 		}
 		else {
 			syslog(LOG_CRIT, "failed to open deevice file");
@@ -122,7 +121,7 @@ void *handle_client_thread(void *threadp) {
 	
 	//below is handling the bytes to send back
 	pthread_mutex_lock(&log_mutex);
-	FILE * file_ptr = fopen(DATA_FILE, "r"); //open in read mode
+	file_ptr = fopen(DATA_FILE, "r"); //open in read mode
 	if (file_ptr != NULL) {
 		fseek(file_ptr, 0, SEEK_SET);
 		ssize_t bytes_rx;
@@ -134,17 +133,7 @@ void *handle_client_thread(void *threadp) {
 	} else {
 	syslog(LOG_CRIT, "failed to open for reading");
 	}
-	/*//fseek(file_ptr, 0, SEEK_SET);
-	while (server_run==1) {
-		ssize_t bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr);
-		if (bytes_rx == 0) {
-			break; //no more data to read
-		}
-		send(newfd, buff, bytes_rx, 0); //send data to client
-		memset( buff, 0, MAXDATASIZE);
-		fclose(file_ptr);
-		file_ptr = NULL;
-	} */
+	
 	pthread_mutex_unlock(&log_mutex);
 	
 	node->flag = 1; //set thread complete flaf
@@ -191,11 +180,12 @@ void cleanup() {
 	}
 	
 	/*
-	//close log file
+	//close log file if any open
+	FILE * file_ptr;
 	if (file_ptr != NULL) {
 		fclose(file_ptr);
 		file_ptr = NULL;
-	}*/
+	} */
 	
 	//clean up threads
 	struct ThreadNode *current, *tmp;
@@ -259,6 +249,14 @@ int main(int argc, char *argv[])
     //set up signal handler      
     add_sigActions();
     
+    FILE * fp = fopen(DATA_FILE, "w");
+    if (fp != NULL) {
+		fclose(fp);
+	} else {
+		perror("failed to trunc data file");
+		exit(EXIT_FAILURE);
+	}
+    
     //initialize
     if (init(&threadList) == -1)
     {
@@ -299,14 +297,6 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 	
-	/*
-	//opening output file
-	file_ptr = fopen(DATA_FILE, "w+");
-	if (file_ptr == NULL)
-	{
-		perror("failed to open output file");
-		exit(-1);
-	} */
 	
 	//pthread_create(&timer_thread, NULL, timer_thread_func, file_ptr); //check last arg
 	
