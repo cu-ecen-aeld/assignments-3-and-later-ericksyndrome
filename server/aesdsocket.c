@@ -34,7 +34,7 @@
 volatile sig_atomic_t cleanup_trigger = 0;
 int server_run = 0; //initially 1
 int socketfd = -1; //was 0
-FILE *file_ptr = NULL; //file going to /var/tmp/ or /dev/aesdchar
+//FILE *file_ptr = NULL; //file going to /var/tmp/ or /dev/aesdchar
 #ifndef USE_AESD_CHAR_DEVICE 
 pthread_t timer_thread; //global var for timer_thread
 #endif
@@ -87,7 +87,7 @@ void *handle_client_thread(void *threadp) {
 	int newfd = node->newfd; //created an instance threadParams 
 	char buff[MAXDATASIZE];
 	memset(buff, 0, MAXDATASIZE); //zero mem
-	//int bytes = 0;
+	
 	
 	//below is handling the recv
 	while (server_run==1) {
@@ -98,9 +98,17 @@ void *handle_client_thread(void *threadp) {
 		
 		// locking file mutex for writing data
 		pthread_mutex_lock(&log_mutex);
+		//making mods for a8 below
+		FILE * file_ptr = fopen(DATA_FILE, "a"); //open in append mode
 		if (file_ptr != NULL) {
-			fprintf(file_ptr, "%s", buff);
-			fflush(file_ptr); //questionable
+			int write_bytes = fwrite(buff, sizeof(char), bytes, file_ptr);
+			//fprintf(file_ptr, "%s", buff);
+			fflush(file_ptr); //questionable, flushing stream
+			fclose(file_ptr); //closing file to ensure data is written and fd is freed
+			file_ptr = NULL; //questionable
+		}
+		else {
+			syslog(LOG_CRIT, "failed to open deevice file");
 		}
 		pthread_mutex_unlock(&log_mutex);
 		
@@ -114,7 +122,19 @@ void *handle_client_thread(void *threadp) {
 	
 	//below is handling the bytes to send back
 	pthread_mutex_lock(&log_mutex);
-	fseek(file_ptr, 0, SEEK_SET);
+	FILE * file_ptr = fopen(DATA_FILE, "r"); //open in read mode
+	if (file_ptr != NULL) {
+		fseek(file_ptr, 0, SEEK_SET);
+		ssize_t bytes_rx;
+		while (server_run ==1 && (bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr)) > 0) {
+			send(newfd, buff, bytes_rx, 0); //send data to client
+			memset(buff, 0, MAXDATASIZE);
+		}
+		fclose(file_ptr);
+	} else {
+	syslog(LOG_CRIT, "failed to open for reading");
+	}
+	/*//fseek(file_ptr, 0, SEEK_SET);
 	while (server_run==1) {
 		ssize_t bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr);
 		if (bytes_rx == 0) {
@@ -122,7 +142,9 @@ void *handle_client_thread(void *threadp) {
 		}
 		send(newfd, buff, bytes_rx, 0); //send data to client
 		memset( buff, 0, MAXDATASIZE);
-	}
+		fclose(file_ptr);
+		file_ptr = NULL;
+	} */
 	pthread_mutex_unlock(&log_mutex);
 	
 	node->flag = 1; //set thread complete flaf
@@ -168,11 +190,12 @@ void cleanup() {
 		socketfd = -1;   //prevents reuse of old socket fd
 	}
 	
+	/*
 	//close log file
 	if (file_ptr != NULL) {
 		fclose(file_ptr);
 		file_ptr = NULL;
-	}
+	}*/
 	
 	//clean up threads
 	struct ThreadNode *current, *tmp;
@@ -276,13 +299,14 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 	
+	/*
 	//opening output file
 	file_ptr = fopen(DATA_FILE, "w+");
 	if (file_ptr == NULL)
 	{
 		perror("failed to open output file");
 		exit(-1);
-	}
+	} */
 	
 	//pthread_create(&timer_thread, NULL, timer_thread_func, file_ptr); //check last arg
 	
@@ -310,7 +334,7 @@ int main(int argc, char *argv[])
 		syslog(LOG_INFO, "Accepted connection from: %s", peer_ip);
 		
 		struct ThreadNode *node = insert_node(&threadList);
-		node->log = file_ptr;
+		//node->log = file_ptr; //come back here to check
 		node->newfd = peer;
 		node->flag = 0;
 		
