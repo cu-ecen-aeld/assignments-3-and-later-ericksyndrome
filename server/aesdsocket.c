@@ -19,26 +19,31 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
+#define USE_AESD_CHAR_DEVICE
 
-
+#ifdef USE_AESD_CHAR_DEVICE
+	#define DATA_FILE ("/dev/aesdchar")
+#else
+	#define DATA_FILE ("/var/tmp/aesdsocketdata")
+#endif
 
 #define SERVER_PORT     ("9000")
 #define MAXDATASIZE     (1024)
-#define TMP_FILE        ("/var/tmp/aesdsocketdata")
 #define NUM_THREADS     (10) 
 
 volatile sig_atomic_t cleanup_trigger = 0;
 int server_run = 0; //initially 1
 int socketfd = -1; //was 0
-FILE *file_ptr = NULL; //file going to /var/tmp/ 
+FILE *file_ptr = NULL; //file going to /var/tmp/ or /dev/aesdchar
+#ifndef USE_AESD_CHAR_DEVICE 
 pthread_t timer_thread; //global var for timer_thread
+#endif
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t thread_list_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct ThreadNode { //this struct is used to manage node
 	pthread_t thread;
 	int newfd;  //peer data
-	//int run;    //used for controlled termination
 	//pthread_mutex_t *mutex;
 	FILE *log;
 	int flag;  //contains params
@@ -124,6 +129,8 @@ void *handle_client_thread(void *threadp) {
 	return NULL;
 } 
 
+#ifndef USE_AESD_CHAR_DEVICE
+
 //timer thread
 void *timer_thread_func(void *arg) {
 	//pthread_mutex_t *mutex = (pthread_mutex_t *)arg;
@@ -146,13 +153,14 @@ void *timer_thread_func(void *arg) {
 	}
 	return NULL;
 }
+#endif
 
 void cleanup() {
 	//stop server
 	server_run = 0;
 	
 	//join timer thread
-	pthread_join(timer_thread, NULL); //inspect
+	//pthread_join(timer_thread, NULL); //inspect
 	
 	if (socketfd > 0) {
 		shutdown(socketfd, SHUT_RDWR); //graceful shut down
@@ -185,20 +193,13 @@ void cleanup() {
 	pthread_mutex_destroy(&log_mutex);
 	pthread_mutex_destroy(&thread_list_mutex);
 	syslog(LOG_CRIT, "cleanup complete");
-		/*
-	join_threads(&threadList, 1); //cleans list as well
-	pthread_mutex_destroy(&log_mutex);
-	syslog(LOG_CRIT, "cleanup complete"); */
+		
 }
 
 void handle_sig(int sig)
 {
 	if (sig == SIGINT || sig == SIGTERM) {
-	/*	syslog(LOG_CRIT, "caught signal, exiting now");
-		//shut server
-		cleanup();
-		exit(EXIT_SUCCESS);
-	}*/
+	
 	cleanup_trigger = 1; //this is for thread safety
 }
 } 
@@ -209,7 +210,7 @@ syslog(LOG_DEBUG, "adding sig actions success");
 struct sigaction act = {
 	 .sa_handler = handle_sig,
  };
-// act.sa_handler = handle_sig;
+
  sigemptyset(&act.sa_mask);  
  sigaction(SIGINT, &act, NULL);
  sigaction(SIGTERM, &act, NULL);	
@@ -276,14 +277,14 @@ int main(int argc, char *argv[])
 	}
 	
 	//opening output file
-	file_ptr = fopen(TMP_FILE, "w+");
+	file_ptr = fopen(DATA_FILE, "w+");
 	if (file_ptr == NULL)
 	{
 		perror("failed to open output file");
 		exit(-1);
 	}
 	
-	pthread_create(&timer_thread, NULL, timer_thread_func, file_ptr); //check last arg
+	//pthread_create(&timer_thread, NULL, timer_thread_func, file_ptr); //check last arg
 	
 	//while loop as long as run is enabled
 	while (server_run)

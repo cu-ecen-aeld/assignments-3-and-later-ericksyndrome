@@ -95,7 +95,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     struct aesd_dev* dev = (struct aesd_dev*)filp->private_data;
     ssize_t retval = -ENOMEM;
     size_t copied_bytes = 0;
-    //size_t bytes_written;
     int newline = 0;
     size_t i;   
     PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
@@ -109,12 +108,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 	if (dev->w_buff == NULL) {
 		dev->w_buff = kmalloc(count, GFP_KERNEL);
 		dev->w_buff_size = count;
-/*		if (!dev->w_buff) {
-			mutex_unlock(&dev->lock);
-			return -ENOMEM;
-		} */
-		//dev->w_buff = 0; //staring with a clean buffer of correct size
-		//retval = count;
 	}
 
 	// dont need to use kfree(dev->w_buff) as krealloc does this for me
@@ -127,7 +120,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		}
 		dev->w_buff = new_buff;
 		dev->w_buff_size += count; //
-		//retval = count;
+		
 	}
 	
 	//checking for failure at this point
@@ -136,7 +129,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 			return -ENOMEM;
 		}
 	
-	//changed - count from buff_size
 	copied_bytes = copy_from_user(&dev->w_buff[dev->w_buff_size - count], buf, count);
 	if (copied_bytes != 0) {
 		retval = -EFAULT;
@@ -162,11 +154,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 		struct aesd_buffer_entry new_entry;
 		new_entry.buffptr = dev->w_buff;
 		new_entry.size = dev->w_buff_size;
-		
-		/*if (new_entry.buffptr == NULL) {
-			mutex_unlock(&dev->lock);
-			return -ENOMEM;
-		}*/
 		
 		//adding to circular buffer	
 		aesd_circular_buffer_add_entry(&dev->buff, &new_entry);
