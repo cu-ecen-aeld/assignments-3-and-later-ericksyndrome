@@ -31,4 +31,4 @@ aesdsocket.o: aesdsocket.c
 	fi
 
 clean:
-	@rm -f aesdsocket aesdsocket.o
+	-rm -f aesdsocket *.o *.d
