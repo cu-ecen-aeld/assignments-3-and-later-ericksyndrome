@@ -20,9 +20,9 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
-//#ifndef USE_AESD_CHAR_DEVICE
-//#define USE_AESD_CHAR_DEVICE 1
-//#endif
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
 
 #ifdef USE_AESD_CHAR_DEVICE
 	#define DATA_FILE ("/dev/aesdchar")
