@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
@@ -19,9 +20,9 @@
 #include <pthread.h>
 #include <sys/queue.h>
 
-#ifndef USE_AESD_CHAR_DEVICE
-#define USE_AESD_CHAR_DEVICE 1
-#endif
+//#ifndef USE_AESD_CHAR_DEVICE
+//#define USE_AESD_CHAR_DEVICE 1
+//#endif
 
 #ifdef USE_AESD_CHAR_DEVICE
 	#define DATA_FILE ("/dev/aesdchar")
@@ -90,6 +91,8 @@ void *handle_client_thread(void *threadp) {
 	char buff[MAXDATASIZE];
 	memset(buff, 0, MAXDATASIZE); //zero mem
 	FILE * file_ptr;
+	int openfd = 0;
+	ssize_t bytes_rx;
 	
 	//below is handling the recv
 	while (server_run==1) {
@@ -101,6 +104,24 @@ void *handle_client_thread(void *threadp) {
 		// locking file mutex for writing data
 		pthread_mutex_lock(&log_mutex);
 		//making mods for a8 below
+#ifdef USE_AESD_CHAR_DEVICE
+			openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
+			if (!openfd || openfd == -1) {
+				syslog(LOG_ERR, "Could not open file");
+				break;
+			}
+			if (write(openfd, buff, bytes) == -1) {
+				syslog(LOG_ERR, "cannot write damn");
+				pthread_mutex_unlock(&log_mutex);
+				perror("write error");
+			}
+		/*	else {
+				printf("%c", buff);
+			} */
+			close(openfd);
+			
+			
+#else
 		file_ptr = fopen(DATA_FILE, "a"); //open in append mode
 		if (file_ptr != NULL) {
 			fwrite(buff, sizeof(char), bytes, file_ptr);
@@ -111,6 +132,7 @@ void *handle_client_thread(void *threadp) {
 		else {
 			syslog(LOG_CRIT, "failed to open deevice file");
 		}
+#endif
 		pthread_mutex_unlock(&log_mutex);
 		
 		//check for newline to break the loop
@@ -123,10 +145,21 @@ void *handle_client_thread(void *threadp) {
 	
 	//below is handling the bytes to send back
 	pthread_mutex_lock(&log_mutex);
+#ifdef USE_AESD_CHAR_DEVICE
+	openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
+	if (openfd == -1) {
+        syslog(LOG_ERR, "Could not open device file for reading");
+    } else {
+        while (server_run ==1 && (bytes_rx = read(openfd, buff, MAXDATASIZE)) > 0) {
+            send(newfd, buff, bytes_rx, 0); //send data to client
+            memset(buff, 0, MAXDATASIZE);
+        }
+        close(openfd);
+    }
+#else
 	file_ptr = fopen(DATA_FILE, "r"); //open in read mode
 	if (file_ptr != NULL) {
 		fseek(file_ptr, 0, SEEK_SET);
-		ssize_t bytes_rx;
 		while (server_run ==1 && (bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr)) > 0) {
 			send(newfd, buff, bytes_rx, 0); //send data to client
 			memset(buff, 0, MAXDATASIZE);
@@ -135,7 +168,7 @@ void *handle_client_thread(void *threadp) {
 	} else {
 	syslog(LOG_CRIT, "failed to open for reading");
 	}
-	
+#endif
 	pthread_mutex_unlock(&log_mutex);
 	
 	node->flag = 1; //set thread complete flaf
@@ -169,12 +202,15 @@ void *timer_thread_func(void *arg) {
 #endif
 
 void cleanup() {
+	
 	//stop server
 	server_run = 0;
 	
 	//join timer thread
 	//pthread_join(timer_thread, NULL); //inspect
-	
+#ifndef USE_AESD_CHAR_DEVICE
+    remove(DATA_FILE);
+#endif	
 	if (socketfd > 0) {
 		shutdown(socketfd, SHUT_RDWR); //graceful shut down
 		close(socketfd);
@@ -251,13 +287,22 @@ int main(int argc, char *argv[])
     //set up signal handler      
     add_sigActions();
     
-    FILE * fp = fopen(DATA_FILE, "w");
+#ifndef USE_AESD_CHAR_DEVICE
+	if (remove(DATA_FILE) != 0) {
+        // Handle error if the file removal failed, unless it's just because the file didn't exist
+        if (errno != ENOENT) {
+            perror("Failed to remove data file");
+            exit(EXIT_FAILURE);
+        }
+    }
+#endif
+    /*FILE * fp = fopen(DATA_FILE, "w");
     if (fp != NULL) {
 		fclose(fp);
 	} else {
 		perror("failed to trunc data file");
 		exit(EXIT_FAILURE);
-	}
+	}*/
     
     //initialize
     if (init(&threadList) == -1)
