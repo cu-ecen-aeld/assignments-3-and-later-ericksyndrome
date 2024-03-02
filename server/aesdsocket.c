@@ -91,8 +91,16 @@ void *handle_client_thread(void *threadp) {
 	char buff[MAXDATASIZE];
 	memset(buff, 0, MAXDATASIZE); //zero mem
 	FILE * file_ptr;
-	int openfd = 0;
+	//int openfd = 0;
 	ssize_t bytes_rx;
+	
+#ifdef USE_AESD_CHAR_DEVICE
+    int openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
+    if (openfd == -1) {
+        syslog(LOG_ERR, "Could not open file %s", DATA_FILE);
+        return NULL; // Exit thread if unable to open character device
+    }
+#endif
 	
 	//below is handling the recv
 	while (server_run==1) {
@@ -105,11 +113,11 @@ void *handle_client_thread(void *threadp) {
 		pthread_mutex_lock(&log_mutex);
 		//making mods for a8 below
 #ifdef USE_AESD_CHAR_DEVICE
-			openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
-			if (!openfd || openfd == -1) {
-				syslog(LOG_ERR, "Could not open file");
-				break;
-			}
+			//openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
+			//if (!openfd || openfd == -1) {
+			//	syslog(LOG_ERR, "Could not open file");
+			//	break;
+			//}
 			if (write(openfd, buff, bytes) == -1) {
 				syslog(LOG_ERR, "cannot write damn");
 				pthread_mutex_unlock(&log_mutex);
@@ -146,16 +154,16 @@ void *handle_client_thread(void *threadp) {
 	//below is handling the bytes to send back
 	pthread_mutex_lock(&log_mutex);
 #ifdef USE_AESD_CHAR_DEVICE
-	openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
-	if (openfd == -1) {
-        syslog(LOG_ERR, "Could not open device file for reading");
-    } else {
+	//openfd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, S_IWUSR | S_IRUSR | S_IWGRP | S_IRGRP | S_IROTH);
+	//if (openfd == -1) {
+    //    syslog(LOG_ERR, "Could not open device file for reading");
+   // } else {
         while (server_run ==1 && (bytes_rx = read(openfd, buff, MAXDATASIZE)) > 0) {
             send(newfd, buff, bytes_rx, 0); //send data to client
             memset(buff, 0, MAXDATASIZE);
         }
-        close(openfd);
-    }
+       close(openfd);
+   // }
 #else
 	file_ptr = fopen(DATA_FILE, "r"); //open in read mode
 	if (file_ptr != NULL) {
