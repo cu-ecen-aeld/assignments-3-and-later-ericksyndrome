@@ -21,7 +21,7 @@
 
 #include "../aesd-char-driver/aesd_ioctl.h" 
 
-#define USE_AESD_CHAR_DEVICE 1
+//#define USE_AESD_CHAR_DEVICE 1
 
 
 #define BUFFER_SIZE 1000000
