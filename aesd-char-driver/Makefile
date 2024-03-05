@@ -1,12 +1,12 @@
 # See example Makefile from scull project
 # Comment/uncomment the following line to disable/enable debugging
-DEBUG = y
+#DEBUG = y
 
 # Add your debugging flag (or not) to CFLAGS
 ifeq ($(DEBUG),y)
-  DEBFLAGS = -O -g -DSCULL_DEBUG -std=gnu99 # "-O" is needed to expand inlines
+  DEBFLAGS = -O -g -DSCULL_DEBUG # "-O" is needed to expand inlines
 else
-  DEBFLAGS = -O2 -std=gnu99
+  DEBFLAGS = -O2 
 endif
 
 EXTRA_CFLAGS += $(DEBFLAGS)
@@ -22,10 +22,8 @@ PWD       := $(shell pwd)
 
 modules:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
-	chmod +x *.ko
 
 endif
 
 clean:
 	rm -rf *.o *~ core .depend .*.cmd *.ko *.mod.c .tmp_versions
-
