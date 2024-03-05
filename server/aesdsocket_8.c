@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -17,11 +16,6 @@
 #include <sys/queue.h>
 #include <time.h>
 #include <unistd.h> 
-
-
-#include "../aesd-char-driver/aesd_ioctl.h" 
-
-#define USE_AESD_CHAR_DEVICE 1
 
 
 #define BUFFER_SIZE 1000000
@@ -144,20 +138,10 @@ void *timer_thread_function(void *arg) {
 
 void *handle_client_connection(void *arg) {
     struct ThreadInfo *info = (struct ThreadInfo *)arg;
-    //ioctl tracker
-    bool ioctrl_tracker = false;
     int client_sock = info->client_socket;
     struct sockaddr_in client_addr= info->client_thread_addr;
     //socklen_t sin_thread_size_local = info->sin_thread_size;
     char client_ip[INET_ADDRSTRLEN];
-     struct aesd_seekto seek_data_from_server;
-    // Receive data and append to file
-    file_ptr = fopen(DATA_FILE, "w+");
-    if (file_ptr == NULL) {
-        perror("fopen");
-        close(client_sock);
-    }
-    
     
     pthread_mutex_lock(&log_mutex);
     char *buffer = (char*)malloc(BUFFER_SIZE * sizeof(char));
@@ -172,14 +156,11 @@ void *handle_client_connection(void *arg) {
     ssize_t total_received = 0;
     ssize_t bytes_received;
     char *ptr = NULL;
-    unsigned int X = 0;
-    unsigned int Y = 0;
-    int eon = 0;
     pthread_mutex_lock(&log_mutex);
     
     while ((bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0)) > 0) {
         if ((total_received > available_heap)) {
-            syslog(LOG_INFO, "Too large for available heap, have to closie connection");
+            syslog(LOG_INFO, "Packet too large for available heap, closing connection");
             fclose(file_ptr);
             close(client_sock);
             free(buffer);
@@ -193,92 +174,15 @@ void *handle_client_connection(void *arg) {
         }
         total_received += bytes_received;
     }
-    
-    char* start = strstr(buffer, "AESDCHAR_IOCSEEKTO:");
-    if (start != NULL) {
-		ioctrl_tracker = true;
-		sscanf(start, "AESDCHAR_IOCSEEKTO:%u,%u", &seek_data_from_server.write_cmd, &seek_data_from_server.write_cmd_offset);
-		char* end = strchr(start, '\n');
-		if (end != NULL) {
-			end++; //moving past the newline here
-		} else {
-			end = start + strlen("AESDCHAR_IOCSEEKTO:");  // just move past the command if no newline is found
-		}
-	size_t bytes_move = buffer + total_received - end;
-    	char* dest = start;
-    	char* src = end;
-    	while (*src) {
-    		*dest = *src;
-    		dest++;
-    		src++;
-    	}
-    	*dest = '\0';  // Null-terminate the string
-    	total_received -= (end - start);  // adjust the total_received count
-    	*start = '\0';
-    	*end = '\0';
-    	*src = '\0';
-    }
-    	
     fprintf(file_ptr, "%s", buffer);
     fseek(file_ptr, 0, SEEK_END);
     long file_size = ftell(file_ptr);
     fseek(file_ptr, 0, SEEK_SET);
     // Allocate memory for the file contents (+1 for null-terminator)
     char* file_contents = (char*)malloc(file_size + 1);
-    if (!file_contents) {
-    		perror("malloc");
-    		pthread_mutex_unlock(&log_mutex);
-    		free(buffer);
-    		buffer = NULL;
-    		return NULL;
-    	}
-    	else{
-    		memset(file_contents, 0, sizeof(file_contents));
-    	}
-
-    
-        if (ioctrl_tracker == true){
-        syslog(LOG_INFO, "Encoded seek data: write_cmd = %u, write_cmd_offset = %u", seek_data_from_server.write_cmd, seek_data_from_server.write_cmd_offset);
-    	int file_descriptor = fileno(file_ptr);
-	if (file_descriptor == -1) {
-    		// Handle the error, e.g., print to syslog and exit
-    		syslog(LOG_ERR, "Error getting file descriptor: %m");
-    		fclose(file_ptr); // Close the file if it's open
-    		exit(EXIT_FAILURE);
-	}
-	// Get the ioctl command number
-    	unsigned int ioctlCommand = _IOC_NR(AESDCHAR_IOCSEEKTO);
-    	// Get the ioctl command type
-    	unsigned int ioctlType = _IOC_TYPE(AESDCHAR_IOCSEEKTO);
-    	// Log the ioctl command type to syslog
-    	syslog(LOG_INFO, "IOCTL Command Type: %u", ioctlType);
-    	// Log the ioctl command number to syslog
-    	syslog(LOG_INFO, "IOCTL Command Number: %u", ioctlCommand);
-	syslog(LOG_INFO, "ioctl command: %ld", AESDCHAR_IOCSEEKTO);
-	syslog(LOG_INFO, "launching ioctl call..");
-	ioctlCommand = 0;
-	ioctlType = 0;
-    	if(ioctl(file_descriptor, AESDCHAR_IOCSEEKTO, &seek_data_from_server) == -1) {
-    	  //if(ioctl(file_descriptor, AESDCHAR_IOCSEEKTO, &seek_data_from_server) == -1) {
-    		syslog(LOG_ERR, "ioctl exploded");
-    		//syslog(LOG_ERR, "ioctl failed: %s", strerror(errno));
-    		syslog(LOG_ERR, "ioctl failed: %s (errno=%d)", strerror(errno), errno);
-    	}
-	else{
-		long position = ftell(file_ptr);
-		syslog(LOG_INFO, "Current file position after ioctl: %ld", position);
-		syslog(LOG_INFO, "ioctrl_tracker true, write_cmd: %u, write_cmd_offset: %u", seek_data_from_server.write_cmd, seek_data_from_server.write_cmd_offset);
-	}
-	file_descriptor = 0;
-	ioctrl_tracker == false;
-    }
-    else
-    {
-    	syslog(LOG_INFO, "ioctrl_tracker false, write_cmd: %u, write_cmd_offset: %u", seek_data_from_server.write_cmd, seek_data_from_server.write_cmd_offset);
-    }
 
     size_t bytes_read;
-    
+    //while ((bytes_read = fread(buffer, 1, sizeof(buffer), file_ptr)) > 0) {
     while ((bytes_read = fread(file_contents, 1, file_size, file_ptr)) > 0) {
         ssize_t bytes_sent = send(client_sock, file_contents, bytes_read, 0);
         //printf("Sent %zu bytes to client.\n", bytes_sent);
