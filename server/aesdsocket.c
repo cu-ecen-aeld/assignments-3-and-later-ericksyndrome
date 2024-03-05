@@ -167,7 +167,7 @@ void *handle_client_thread(void *threadp) {
        close(openfd);
    // }
 #else */
-	file_ptr = fopen(DATA_FILE, "r"); //open in read mode
+	//file_ptr = fopen(DATA_FILE, "r"); //open in read mode
 	if (file_ptr != NULL) {
 		fseek(file_ptr, 0, SEEK_SET);
 		while (server_run ==1 && (bytes_rx = fread(buff, sizeof(char), MAXDATASIZE, file_ptr)) > 0) {
