@@ -17,7 +17,6 @@
 #include <time.h>
 #include <unistd.h> // For sbrk
 #include <errno.h>
-//#include <linux/fs.h>
 #include "../aesd-char-driver/aesd_ioctl.h" 
 
 #define USE_AESD_CHAR_DEVICE 1
