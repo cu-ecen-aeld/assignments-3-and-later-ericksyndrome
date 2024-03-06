@@ -4,12 +4,10 @@
  *  Created on: Oct 23, 2019
  *      Author: Dan Walkes
  */
-
-#include <linux/mutex.h>
-#include "aesd-circular-buffer.h"
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
-#define AESD_CHAR_DRIVER_AESDCHAR_H
-#include "aesd-circular-buffer.h"_
+#define AESD_CHAR_DRIVER_AESDCHAR_H_
+
+#include "aesd-circular-buffer.h"
 
 #define AESD_DEBUG 1  //Remove comment on this line to enable debug
 
@@ -26,16 +24,24 @@
 #  define PDEBUG(fmt, args...) /* not debugging: nothing */
 #endif
 
+
+/**
+ * @brief AESD Character Device Structure
+ * 
+ * Designed to be add character devices into the linux kernel
+*/
 struct aesd_dev
 {
     /**
      * TODO: Add structure(s) and locks needed to complete assignment requirements
      */
-    struct aesd_circular_buffer circular_buffer;
-    struct aesd_buffer_entry buffer_entry;
-    char *temp_buffer;
-    struct mutex lock;
-    size_t temp_size;
+
+    struct mutex lock; /* Locking primitive for the driver */
+    struct aesd_circular_buffer buffer;  /*Circular buffer struct*/
     struct cdev cdev;     /* Char device structure      */
+    char *write_buffer; /*Pointer to dynamically allocated buffer for each device*/
+    size_t write_buffer_size; /* Amount of data currently stored in buffer*/
+    size_t buff_size; //Total size of buff
 };
+
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
