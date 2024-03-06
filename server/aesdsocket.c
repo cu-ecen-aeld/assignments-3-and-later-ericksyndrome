@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -16,28 +15,26 @@
 #include <pthread.h>
 #include <sys/queue.h>
 #include <time.h>
-#include <unistd.h> 
-
-
+#include <unistd.h> // For sbrk
+#include <errno.h>
+//#include <linux/fs.h>
 #include "../aesd-char-driver/aesd_ioctl.h" 
 
 #define USE_AESD_CHAR_DEVICE 1
-
 
 #define BUFFER_SIZE 1000000
 #define PORT 9000
 
 #ifdef USE_AESD_CHAR_DEVICE
-#define DATA_FILE "/dev/aesdchar"
+#define FILE_NAME "/dev/aesdchar"
 #else
-#define DATA_FILE "/var/tmp/aesdsocketdata"
+#define FILE_NAME "/var/tmp/aesdsocketdata"
 #endif
 
 
 int sockfd = 0;
 FILE *file_ptr = NULL;
 
-// strcuts for threads and info
 struct ThreadInfo {
     pthread_t thread_id;
     int client_socket;
@@ -51,7 +48,7 @@ struct ThreadInfo {
 SLIST_HEAD(ThreadList, ThreadInfo) thread_list = SLIST_HEAD_INITIALIZER(thread_list);
 
 pthread_mutex_t thread_list_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Calculate available heap size
 size_t get_available_heap_size() {
@@ -61,7 +58,6 @@ size_t get_available_heap_size() {
     return available_heap;
 }
 
-// daemon functionality
 void daemonize() {
     pid_t pid, sid;
 
@@ -87,7 +83,6 @@ void daemonize() {
     close(STDERR_FILENO);
 }
 
-// cleanup function
 void cleanup_threads(pthread_t timer_thread_id) {
     struct ThreadInfo *info, *tmp;
     pthread_mutex_lock(&thread_list_mutex);
@@ -120,9 +115,9 @@ void add_timestamp_to_file(FILE *file) {
 
     strftime(timestamp, sizeof(timestamp), "timestamp:%a, %d %b %Y %H:%M:%S %z", time_info);
 
-    pthread_mutex_lock(&log_mutex);
+    pthread_mutex_lock(&file_mutex);
     fprintf(file, "%s\n", timestamp);
-    pthread_mutex_unlock(&log_mutex);
+    pthread_mutex_unlock(&file_mutex);
     //printf("%s\n", timestamp);
 
   
@@ -143,27 +138,26 @@ void *timer_thread_function(void *arg) {
 }
 
 void *handle_client_connection(void *arg) {
-    struct ThreadInfo *info = (struct ThreadInfo *)arg;
-    //ioctl tracker
+
     bool ioctrl_tracker = false;
+    struct ThreadInfo *info = (struct ThreadInfo *)arg;
     int client_sock = info->client_socket;
     struct sockaddr_in client_addr= info->client_thread_addr;
     //socklen_t sin_thread_size_local = info->sin_thread_size;
     char client_ip[INET_ADDRSTRLEN];
-     struct aesd_seekto seek_data_from_server;
+    struct aesd_seekto seek_data_from_server;
     // Receive data and append to file
-    file_ptr = fopen(DATA_FILE, "w+");
+    file_ptr = fopen(FILE_NAME, "w+");
     if (file_ptr == NULL) {
         perror("fopen");
         close(client_sock);
+        //return -1;
     }
-    
-    
-    pthread_mutex_lock(&log_mutex);
+    pthread_mutex_lock(&file_mutex);
     char *buffer = (char*)malloc(BUFFER_SIZE * sizeof(char));
     memset(buffer, 0, BUFFER_SIZE*sizeof(char));
     size_t available_heap = get_available_heap_size();
-    pthread_mutex_unlock(&log_mutex);
+    pthread_mutex_unlock(&file_mutex);
     
     // Log the accepted connection to syslog with client IP address
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
@@ -174,60 +168,62 @@ void *handle_client_connection(void *arg) {
     char *ptr = NULL;
     unsigned int X = 0;
     unsigned int Y = 0;
-    int eon = 0;
-    pthread_mutex_lock(&log_mutex);
+    int end_of_numbers = 0;
+    pthread_mutex_lock(&file_mutex);
     
     while ((bytes_received = recv(client_sock, buffer, BUFFER_SIZE - 1, 0)) > 0) {
         if ((total_received > available_heap)) {
-            syslog(LOG_INFO, "Too large for available heap, have to closie connection");
+            syslog(LOG_INFO, "Packet too large for available heap, closing connection");
             fclose(file_ptr);
             close(client_sock);
             free(buffer);
             buffer = NULL;
             return NULL;
         }
-
-        ptr = strchr(buffer, '\n');
-        if (ptr != NULL) {
-            break;
-        }
-        total_received += bytes_received;
+	        ptr = strchr(buffer, '\n');
+        	if (ptr != NULL) {
+            		break;
+            	}
+            	total_received += bytes_received;
     }
-    
-    char* start = strstr(buffer, "AESDCHAR_IOCSEEKTO:");
-    if (start != NULL) {
-		ioctrl_tracker = true;
-		sscanf(start, "AESDCHAR_IOCSEEKTO:%u,%u", &seek_data_from_server.write_cmd, &seek_data_from_server.write_cmd_offset);
-		char* end = strchr(start, '\n');
-		if (end != NULL) {
-			end++; //moving past the newline here
-		} else {
-			end = start + strlen("AESDCHAR_IOCSEEKTO:");  // just move past the command if no newline is found
-		}
-	size_t bytes_move = buffer + total_received - end;
-    	char* dest = start;
-    	char* src = end;
+
+    char* start_of_command = strstr(buffer, "AESDCHAR_IOCSEEKTO:");
+    if (start_of_command != NULL) {
+    	ioctrl_tracker = true;
+    	sscanf(start_of_command, "AESDCHAR_IOCSEEKTO:%u,%u", &seek_data_from_server.write_cmd, &seek_data_from_server.write_cmd_offset);
+    	char* end_of_command = strchr(start_of_command, '\n');
+    	if (end_of_command != NULL) {
+        	end_of_command++;  // move past the newline
+    	}else {
+        	end_of_command = start_of_command + strlen("AESDCHAR_IOCSEEKTO:");  // just move past the command if no newline is found
+    	}
+    	size_t bytes_to_move = buffer + total_received - end_of_command;
+    	char* dest = start_of_command;
+    	char* src = end_of_command;
     	while (*src) {
     		*dest = *src;
     		dest++;
     		src++;
     	}
     	*dest = '\0';  // Null-terminate the string
-    	total_received -= (end - start);  // adjust the total_received count
-    	*start = '\0';
-    	*end = '\0';
+    	total_received -= (end_of_command - start_of_command);  // adjust the total_received count
+    	*start_of_command = '\0';
+    	*end_of_command = '\0';
     	*src = '\0';
     }
-    	
-    fprintf(file_ptr, "%s", buffer);
-    fseek(file_ptr, 0, SEEK_END);
-    long file_size = ftell(file_ptr);
-    fseek(file_ptr, 0, SEEK_SET);
-    // Allocate memory for the file contents (+1 for null-terminator)
-    char* file_contents = (char*)malloc(file_size + 1);
-    if (!file_contents) {
+
+    //if (ioctrl_tracker == false)
+    //{
+        fprintf(file_ptr, "%s", buffer);
+    	fseek(file_ptr, 0, SEEK_END);
+    	long file_size = ftell(file_ptr);
+    	fseek(file_ptr, 0, SEEK_SET);
+    	//}
+    	// Allocate memory for the file contents (+1 for null-terminator)
+    	char* file_contents = (char*)malloc(file_size + 1);
+    	if (!file_contents) {
     		perror("malloc");
-    		pthread_mutex_unlock(&log_mutex);
+    		pthread_mutex_unlock(&file_mutex);
     		free(buffer);
     		buffer = NULL;
     		return NULL;
@@ -276,15 +272,15 @@ void *handle_client_connection(void *arg) {
     {
     	syslog(LOG_INFO, "ioctrl_tracker false, write_cmd: %u, write_cmd_offset: %u", seek_data_from_server.write_cmd, seek_data_from_server.write_cmd_offset);
     }
-
-    size_t bytes_read;
     
+    size_t bytes_read;
+    //while ((bytes_read = fread(buffer, 1, sizeof(buffer), file_ptr)) > 0) {
     while ((bytes_read = fread(file_contents, 1, file_size, file_ptr)) > 0) {
         ssize_t bytes_sent = send(client_sock, file_contents, bytes_read, 0);
         //printf("Sent %zu bytes to client.\n", bytes_sent);
         if (bytes_sent == -1) {
             perror("send");
-            pthread_mutex_unlock(&log_mutex);
+            pthread_mutex_unlock(&file_mutex);
             free(buffer);
             buffer = NULL;
             free(file_contents);
@@ -292,13 +288,14 @@ void *handle_client_connection(void *arg) {
             break;
         }
     }
- 
-    pthread_mutex_unlock(&log_mutex);
+    pthread_mutex_unlock(&file_mutex);
 
+    fclose(file_ptr);
 
     // Log closed connection to syslog
     syslog(LOG_INFO, "Closed connection from %s", client_ip);
     close(client_sock);
+    memset(buffer, 0, BUFFER_SIZE*sizeof(char));
     free(buffer);
     buffer = NULL;
     free(file_contents);
@@ -311,7 +308,7 @@ void sigint_handler(int signum) {
     syslog(LOG_INFO, "Caught signal, exiting");
     fclose(file_ptr);
     close(sockfd);
-    unlink(DATA_FILE); // Delete the file
+    unlink(FILE_NAME); // Delete the file
     closelog();
     exit(EXIT_SUCCESS);
 }
@@ -387,8 +384,15 @@ int main(int argc, char *argv[]) {
     // Set up the signal handler for SIGINT (Ctrl+C) and SIGTERM
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
-    
-      
+    /*
+    // Receive data and append to file
+    file_ptr = fopen(FILE_NAME, "w+");
+    if (file_ptr == NULL) {
+        perror("fopen");
+        close(client_sock);
+        return -1;
+    }
+    */
     /*
     pthread_t timer_thread;
     if(pthread_create(&timer_thread, NULL, timer_thread_function, file_ptr)) {
@@ -423,6 +427,8 @@ int main(int argc, char *argv[]) {
         
 	//cleanup_threads(timer_thread);
     }
+
+    // The signal handler will handle the cleanup
 
     return 0;
 }
