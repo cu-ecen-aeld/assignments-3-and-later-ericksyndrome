@@ -21,7 +21,7 @@
 
 #include "../aesd-char-driver/aesd_ioctl.h" 
 
-//#define USE_AESD_CHAR_DEVICE 1
+#define USE_AESD_CHAR_DEVICE 1
 
 
 #define BUFFER_SIZE 1000000
@@ -388,14 +388,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
     
-       // Receive data and append to file
-    //file_ptr = fopen("/var/tmp/aesdsocketdata", "a+");
-    file_ptr = fopen("DATA_FILE", "a+");
-    if (file_ptr == NULL) {
-        perror("fopen");
-        close(client_sock);
-        return -1;
-    }
+      
     /*
     pthread_t timer_thread;
     if(pthread_create(&timer_thread, NULL, timer_thread_function, file_ptr)) {
