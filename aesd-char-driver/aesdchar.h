@@ -8,7 +8,8 @@
 #include <linux/mutex.h>
 #include "aesd-circular-buffer.h"
 #ifndef AESD_CHAR_DRIVER_AESDCHAR_H_
-#define AESD_CHAR_DRIVER_AESDCHAR_H_
+#define AESD_CHAR_DRIVER_AESDCHAR_H
+#include "aesd-circular-buffer.h"_
 
 #define AESD_DEBUG 1  //Remove comment on this line to enable debug
 
@@ -30,14 +31,11 @@ struct aesd_dev
     /**
      * TODO: Add structure(s) and locks needed to complete assignment requirements
      */
+    struct aesd_circular_buffer circular_buffer;
+    struct aesd_buffer_entry buffer_entry;
+    char *temp_buffer;
+    struct mutex lock;
+    size_t temp_size;
     struct cdev cdev;     /* Char device structure      */
-    struct mutex lock;    // protect access to buffer
-    struct aesd_circular_buffer buff;  //circular buffer struct
-    char *w_buff;         // ptr to dynamically allocated buffer  
-    size_t w_buff_size;   //amount of data stored in w_buff
-    
-    
 };
-
-
 #endif /* AESD_CHAR_DRIVER_AESDCHAR_H_ */
